@@ -1,7 +1,10 @@
-from flask import Flask, render_template
+from flask import Flask, render_template, request, redirect, url_for, session
 from database.db import get_db, init_db, seed_db
+import sqlite3
+from werkzeug.security import generate_password_hash
 
 app = Flask(__name__)
+app.secret_key = "dev-secret-key"
 
 with app.app_context():
     init_db()
@@ -17,8 +20,46 @@ def landing():
     return render_template("landing.html")
 
 
-@app.route("/register")
+@app.route("/register", methods=["GET", "POST"])
 def register():
+    if request.method == "POST":
+        # --- read form fields ---
+        name             = request.form.get("name", "").strip()
+        email            = request.form.get("email", "").strip().lower()
+        password         = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        # --- validate ---
+        error = None
+        if not name or len(name) < 2 or len(name) > 100:
+            error = "Name must be between 2 and 100 characters."
+        elif "@" not in email or "." not in email or len(email) > 120:
+            error = "Please enter a valid email address."
+        elif len(password) < 8 or len(password) > 128:
+            error = "Password must be between 8 and 128 characters."
+        elif password != confirm_password:
+            error = "Passwords do not match."
+
+        if error:
+            return render_template("register.html", error=error,
+                                   name=name, email=email)
+
+        # --- insert ---
+        db = get_db()
+        try:
+            db.execute(
+                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+                (name, email, generate_password_hash(password))
+            )
+            db.commit()
+        except sqlite3.IntegrityError:
+            db.close()
+            return render_template("register.html",
+                                   error="Email already registered.",
+                                   name=name, email=email)
+        db.close()
+        return redirect(url_for("login"))
+
     return render_template("register.html")
 
 
