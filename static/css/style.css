@@ -573,6 +573,179 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* ------------------------------------------------------------------ */
+/* Profile page                                                        */
+/* ------------------------------------------------------------------ */
+
+.profile-page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 3rem 2rem 5rem;
+}
+
+.profile-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.profile-card {
+    background: var(--paper-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 1.75rem 2rem;
+}
+
+/* User info card */
+.user-card {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+}
+
+.user-avatar {
+    flex-shrink: 0;
+    width: 64px;
+    height: 64px;
+    border-radius: 999px;
+    background: var(--accent-light);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+}
+
+.user-name {
+    font-family: var(--font-display);
+    font-size: 1.75rem;
+    color: var(--ink);
+    line-height: 1.2;
+}
+
+.user-email { font-size: 0.95rem; color: var(--ink-muted); }
+.user-since { font-size: 0.8rem; color: var(--ink-faint); margin-top: 0.25rem; }
+
+/* Summary stats */
+.stats-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+}
+
+.stat-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+}
+
+.stat-value {
+    font-family: var(--font-display);
+    font-size: 1.75rem;
+    color: var(--ink);
+}
+
+/* Section headings inside cards */
+.section-heading {
+    font-family: var(--font-display);
+    font-size: 1.2rem;
+    color: var(--ink);
+    margin-bottom: 1.25rem;
+}
+
+/* Transaction table */
+.txn-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.txn-table th {
+    text-align: left;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 0 0.75rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.txn-table td {
+    padding: 0.85rem 0.75rem;
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--ink-soft);
+}
+
+.txn-table tr:last-child td { border-bottom: none; }
+
+.txn-date { color: var(--ink-muted); white-space: nowrap; }
+.txn-amt-col { text-align: right; }
+.txn-amount { font-weight: 600; color: var(--ink); white-space: nowrap; }
+
+/* Category badges */
+.badge {
+    display: inline-block;
+    padding: 0.2rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: var(--paper-warm);
+    color: var(--ink-soft);
+}
+
+.badge-food,
+.badge-health { background: var(--accent-light); color: var(--accent); }
+.badge-transport,
+.badge-entertainment { background: var(--accent-2-light); color: var(--accent-2); }
+.badge-bills { background: var(--danger-light); color: var(--danger); }
+.badge-shopping { background: var(--paper-warm); color: var(--ink-soft); }
+
+/* Category breakdown */
+.breakdown-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.breakdown-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 80px;
+    align-items: center;
+    gap: 1rem;
+}
+
+.breakdown-name { font-size: 0.85rem; font-weight: 500; color: var(--ink-soft); }
+
+.breakdown-track {
+    height: 8px;
+    background: var(--border-soft);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.breakdown-bar {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 999px;
+}
+
+.breakdown-total {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--ink-muted);
+    text-align: right;
+}
+
+/* ------------------------------------------------------------------ */
 /* Responsive                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -592,4 +765,6 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 600px) {
     .nav-links a:not(.nav-cta) { display: none; }
     .hero { padding: 3rem 1rem 2rem; }
+    .stats-row { grid-template-columns: 1fr; }
+    .breakdown-row { grid-template-columns: 90px 1fr 70px; gap: 0.6rem; }
 }

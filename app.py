@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 from database.db import get_db, init_db, seed_db
 import sqlite3
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-key"
@@ -63,8 +63,38 @@ def register():
     return render_template("register.html")
 
 
-@app.route("/login")
+@app.route("/login", methods=["GET", "POST"])
 def login():
+    # Redirect to dashboard if already logged in
+    if 'user_id' in session:
+        return redirect(url_for('dashboard'))
+
+    if request.method == "POST":
+        # --- read form fields ---
+        email    = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+
+        # --- validate against database ---
+        error = None
+        db = get_db()
+        user = db.execute(
+            "SELECT id, name, password_hash FROM users WHERE email = ?",
+            (email,)
+        ).fetchone()
+        db.close()
+
+        # Check if user exists and password matches
+        if user is None or not check_password_hash(user['password_hash'], password):
+            error = "Invalid email or password."
+
+        if error:
+            return render_template("login.html", error=error, email=email)
+
+        # --- set session and redirect ---
+        session['user_id'] = user['id']
+        session['user_name'] = user['name']
+        return redirect(url_for('dashboard'))
+
     return render_template("login.html")
 
 
@@ -84,12 +114,100 @@ def privacy():
 
 @app.route("/logout")
 def logout():
-    return "Logout — coming in Step 3"
+    session.clear()
+    return redirect(url_for('landing'))
+
+
+@app.route("/dashboard")
+def dashboard():
+    # Redirect to login if not logged in
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    user_name = session.get('user_name', 'User')
+    return render_template("dashboard.html", user_name=user_name)
 
 
 @app.route("/profile")
 def profile():
-    return "Profile page — coming in Step 4"
+    # Step 5 — protected route, real DB queries
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    from datetime import datetime
+
+    user_id = session['user_id']
+    db = get_db()
+
+    # 1. User info
+    row = db.execute(
+        "SELECT name, email, created_at FROM users WHERE id = ?",
+        (user_id,)
+    ).fetchone()
+    member_since = datetime.strptime(row['created_at'][:10], "%Y-%m-%d").strftime("%B %Y")
+    user = {
+        "name": row['name'],
+        "email": row['email'],
+        "member_since": member_since,
+        "initials": "".join(part[0] for part in row['name'].split()[:2]).upper(),
+    }
+
+    # 2. Summary stats
+    stats_row = db.execute(
+        "SELECT SUM(amount) as total, COUNT(*) as count FROM expenses WHERE user_id = ?",
+        (user_id,)
+    ).fetchone()
+    total_spent = stats_row['total'] or 0
+    transaction_count = stats_row['count'] or 0
+
+    top_cat = db.execute(
+        "SELECT category FROM expenses WHERE user_id = ? GROUP BY category ORDER BY SUM(amount) DESC LIMIT 1",
+        (user_id,)
+    ).fetchone()
+    stats = {
+        "total_spent": f"{total_spent:,.0f}",
+        "transaction_count": transaction_count,
+        "top_category": top_cat['category'] if top_cat else "—",
+    }
+
+    # 3. Recent transactions (newest first, capped at 10)
+    txn_rows = db.execute(
+        "SELECT date, description, category, amount FROM expenses WHERE user_id = ? ORDER BY date DESC LIMIT 10",
+        (user_id,)
+    ).fetchall()
+    transactions = [
+        {
+            "date": datetime.strptime(t['date'], "%Y-%m-%d").strftime("%d %b %Y"),
+            "description": t['description'] or "—",
+            "category": t['category'],
+            "amount": f"{t['amount']:,.0f}",
+        }
+        for t in txn_rows
+    ]
+
+    # 4. Category breakdown with computed percentages
+    cat_rows = db.execute(
+        "SELECT category, SUM(amount) as total FROM expenses WHERE user_id = ? GROUP BY category ORDER BY total DESC",
+        (user_id,)
+    ).fetchall()
+    categories = [
+        {
+            "name": c['category'],
+            "total": f"{c['total']:,.0f}",
+            "percent": round(c['total'] / total_spent * 100) if total_spent > 0 else 0,
+        }
+        for c in cat_rows
+    ]
+
+    db.close()
+
+    return render_template(
+        "profile.html",
+        user=user,
+        stats=stats,
+        transactions=transactions,
+        categories=categories,
+    )
 
 
 @app.route("/expenses/add")
