@@ -130,41 +130,76 @@ def dashboard():
 
 @app.route("/profile")
 def profile():
-    # Authentication guard — protected route
+    # Step 5 — protected route, real DB queries
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    # --- hardcoded context (real DB queries arrive in Step 5) ---
+    from datetime import datetime
+
+    user_id = session['user_id']
+    db = get_db()
+
+    # 1. User info
+    row = db.execute(
+        "SELECT name, email, created_at FROM users WHERE id = ?",
+        (user_id,)
+    ).fetchone()
+    member_since = datetime.strptime(row['created_at'][:10], "%Y-%m-%d").strftime("%B %Y")
     user = {
-        "name": session.get('user_name', 'Demo User'),
-        "email": "demo@spendly.com",
-        "member_since": "January 2026",
+        "name": row['name'],
+        "email": row['email'],
+        "member_since": member_since,
+        "initials": "".join(part[0] for part in row['name'].split()[:2]).upper(),
     }
-    user["initials"] = "".join(part[0] for part in user["name"].split()[:2]).upper()
 
+    # 2. Summary stats
+    stats_row = db.execute(
+        "SELECT SUM(amount) as total, COUNT(*) as count FROM expenses WHERE user_id = ?",
+        (user_id,)
+    ).fetchone()
+    total_spent = stats_row['total'] or 0
+    transaction_count = stats_row['count'] or 0
+
+    top_cat = db.execute(
+        "SELECT category FROM expenses WHERE user_id = ? GROUP BY category ORDER BY SUM(amount) DESC LIMIT 1",
+        (user_id,)
+    ).fetchone()
     stats = {
-        "total_spent": "18,240",
-        "transaction_count": 8,
-        "top_category": "Bills",
+        "total_spent": f"{total_spent:,.0f}",
+        "transaction_count": transaction_count,
+        "top_category": top_cat['category'] if top_cat else "—",
     }
 
+    # 3. Recent transactions (newest first, capped at 10)
+    txn_rows = db.execute(
+        "SELECT date, description, category, amount FROM expenses WHERE user_id = ? ORDER BY date DESC LIMIT 10",
+        (user_id,)
+    ).fetchall()
     transactions = [
-        {"date": "18 Jun 2026", "description": "Groceries — BigBasket", "category": "Food",          "amount": "2,150"},
-        {"date": "16 Jun 2026", "description": "Metro card recharge",   "category": "Transport",     "amount": "500"},
-        {"date": "14 Jun 2026", "description": "Electricity bill",      "category": "Bills",         "amount": "3,400"},
-        {"date": "12 Jun 2026", "description": "Pharmacy",              "category": "Health",        "amount": "780"},
-        {"date": "10 Jun 2026", "description": "Movie night",           "category": "Entertainment", "amount": "640"},
-        {"date": "06 Jun 2026", "description": "New headphones",        "category": "Shopping",      "amount": "2,499"},
+        {
+            "date": datetime.strptime(t['date'], "%Y-%m-%d").strftime("%d %b %Y"),
+            "description": t['description'] or "—",
+            "category": t['category'],
+            "amount": f"{t['amount']:,.0f}",
+        }
+        for t in txn_rows
     ]
 
+    # 4. Category breakdown with computed percentages
+    cat_rows = db.execute(
+        "SELECT category, SUM(amount) as total FROM expenses WHERE user_id = ? GROUP BY category ORDER BY total DESC",
+        (user_id,)
+    ).fetchall()
     categories = [
-        {"name": "Bills",         "total": "6,800", "percent": 38},
-        {"name": "Food",          "total": "4,320", "percent": 24},
-        {"name": "Shopping",      "total": "2,499", "percent": 14},
-        {"name": "Transport",     "total": "1,800", "percent": 10},
-        {"name": "Health",        "total": "1,540", "percent": 8},
-        {"name": "Entertainment", "total": "1,281", "percent": 6},
+        {
+            "name": c['category'],
+            "total": f"{c['total']:,.0f}",
+            "percent": round(c['total'] / total_spent * 100) if total_spent > 0 else 0,
+        }
+        for c in cat_rows
     ]
+
+    db.close()
 
     return render_template(
         "profile.html",
