@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 from database.db import get_db, init_db, seed_db
-from database.queries import insert_expense
+from worker.sqs_publisher import publish_expense
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date, datetime
@@ -289,10 +289,8 @@ def add_expense():
                                    date=date_raw,
                                    description=request.form.get("description", ""))
 
-        db = get_db()
-        insert_expense(db, session['user_id'], amount, category, date_raw, description)
-        db.close()
-        return redirect(url_for('profile'))
+        publish_expense(session['user_id'], amount, category, date_raw, description)
+        return render_template("expense_queued.html")
 
     return render_template("add_expense.html",
                            categories=EXPENSE_CATEGORIES,
