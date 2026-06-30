@@ -1,7 +1,11 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 from database.db import get_db, init_db, seed_db
+from worker.sqs_publisher import publish_expense
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import date, datetime
+
+EXPENSE_CATEGORIES = ["Food", "Transport", "Bills", "Health", "Entertainment", "Shopping", "Other"]
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-key"
@@ -134,9 +138,39 @@ def profile():
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    from datetime import datetime
-
     user_id = session['user_id']
+    today = datetime.today().date()
+    today_str = today.strftime('%Y-%m-%d')
+
+    # Step 6 — date filter: resolve active period and date bounds
+    period = request.args.get('period', '')
+    from_date_param = request.args.get('from_date', '').strip()
+    to_date_param = request.args.get('to_date', '').strip()
+
+    active_period = 'this_month'
+    from_date_str = today.replace(day=1).strftime('%Y-%m-%d')
+    to_date_str = today_str
+
+    if from_date_param or to_date_param:
+        try:
+            from_date_str = datetime.strptime(from_date_param, '%Y-%m-%d').strftime('%Y-%m-%d') if from_date_param else '2000-01-01'
+            to_date_str = datetime.strptime(to_date_param, '%Y-%m-%d').strftime('%Y-%m-%d') if to_date_param else today_str
+            active_period = 'custom'
+        except ValueError:
+            active_period = 'this_month'
+            from_date_str = today.replace(day=1).strftime('%Y-%m-%d')
+            to_date_str = today_str
+    elif period == 'last_3_months':
+        active_period = 'last_3_months'
+        m, y = today.month - 3, today.year
+        if m <= 0:
+            m += 12
+            y -= 1
+        from_date_str = today.replace(year=y, month=m, day=1).strftime('%Y-%m-%d')
+    elif period == 'all':
+        active_period = 'all'
+        from_date_str = '2000-01-01'
+
     db = get_db()
 
     # 1. User info
@@ -154,15 +188,17 @@ def profile():
 
     # 2. Summary stats
     stats_row = db.execute(
-        "SELECT SUM(amount) as total, COUNT(*) as count FROM expenses WHERE user_id = ?",
-        (user_id,)
+        "SELECT SUM(amount) as total, COUNT(*) as count FROM expenses"
+        " WHERE user_id = ? AND date >= ? AND date <= ?",
+        (user_id, from_date_str, to_date_str)
     ).fetchone()
     total_spent = stats_row['total'] or 0
     transaction_count = stats_row['count'] or 0
 
     top_cat = db.execute(
-        "SELECT category FROM expenses WHERE user_id = ? GROUP BY category ORDER BY SUM(amount) DESC LIMIT 1",
-        (user_id,)
+        "SELECT category FROM expenses WHERE user_id = ? AND date >= ? AND date <= ?"
+        " GROUP BY category ORDER BY SUM(amount) DESC LIMIT 1",
+        (user_id, from_date_str, to_date_str)
     ).fetchone()
     stats = {
         "total_spent": f"{total_spent:,.0f}",
@@ -172,8 +208,9 @@ def profile():
 
     # 3. Recent transactions (newest first, capped at 10)
     txn_rows = db.execute(
-        "SELECT date, description, category, amount FROM expenses WHERE user_id = ? ORDER BY date DESC LIMIT 10",
-        (user_id,)
+        "SELECT date, description, category, amount FROM expenses"
+        " WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date DESC LIMIT 10",
+        (user_id, from_date_str, to_date_str)
     ).fetchall()
     transactions = [
         {
@@ -187,8 +224,9 @@ def profile():
 
     # 4. Category breakdown with computed percentages
     cat_rows = db.execute(
-        "SELECT category, SUM(amount) as total FROM expenses WHERE user_id = ? GROUP BY category ORDER BY total DESC",
-        (user_id,)
+        "SELECT category, SUM(amount) as total FROM expenses"
+        " WHERE user_id = ? AND date >= ? AND date <= ? GROUP BY category ORDER BY total DESC",
+        (user_id, from_date_str, to_date_str)
     ).fetchall()
     categories = [
         {
@@ -207,12 +245,57 @@ def profile():
         stats=stats,
         transactions=transactions,
         categories=categories,
+        active_period=active_period,
+        from_date=from_date_param,
+        to_date=to_date_param,
     )
 
 
-@app.route("/expenses/add")
+@app.route("/expenses/add", methods=["GET", "POST"])
 def add_expense():
-    return "Add expense — coming in Step 7"
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    if request.method == "POST":
+        amount_raw  = request.form.get("amount", "").strip()
+        category    = request.form.get("category", "").strip()
+        date_raw    = request.form.get("date", "").strip()
+        description = request.form.get("description", "").strip() or None
+
+        error = None
+        amount = None
+        try:
+            amount = float(amount_raw)
+            if amount <= 0:
+                error = "Amount must be greater than 0."
+        except ValueError:
+            error = "Amount must be a valid number."
+
+        if not error and category not in EXPENSE_CATEGORIES:
+            error = "Please select a valid category."
+
+        if not error:
+            try:
+                datetime.strptime(date_raw, "%Y-%m-%d")
+            except ValueError:
+                error = "Date must be in YYYY-MM-DD format."
+
+        if error:
+            return render_template("add_expense.html",
+                                   error=error,
+                                   categories=EXPENSE_CATEGORIES,
+                                   amount=amount_raw,
+                                   category=category,
+                                   date=date_raw,
+                                   description=request.form.get("description", ""))
+
+        publish_expense(session['user_id'], amount, category, date_raw, description)
+        return render_template("expense_queued.html")
+
+    return render_template("add_expense.html",
+                           categories=EXPENSE_CATEGORIES,
+                           date=date.today().isoformat(),
+                           error=None, amount="", category="", description="")
 
 
 @app.route("/expenses/<int:id>/edit")

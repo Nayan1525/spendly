@@ -17,7 +17,33 @@
             </div>
         </div>
 
-        <!-- 2. Summary stats row -->
+        <!-- 2. Date filter bar -->
+        <div class="filter-bar">
+            <div class="filter-presets">
+                <a href="{{ url_for('profile') }}?period=this_month"
+                   class="filter-btn{% if active_period == 'this_month' %} filter-btn--active{% endif %}">
+                    This Month
+                </a>
+                <a href="{{ url_for('profile') }}?period=last_3_months"
+                   class="filter-btn{% if active_period == 'last_3_months' %} filter-btn--active{% endif %}">
+                    Last 3 Months
+                </a>
+                <a href="{{ url_for('profile') }}?period=all"
+                   class="filter-btn{% if active_period == 'all' %} filter-btn--active{% endif %}">
+                    All Time
+                </a>
+            </div>
+            <form class="filter-custom" method="GET" action="{{ url_for('profile') }}">
+                <input type="date" name="from_date" class="form-input filter-date"
+                       value="{{ from_date }}" placeholder="From">
+                <span class="filter-sep">—</span>
+                <input type="date" name="to_date" class="form-input filter-date"
+                       value="{{ to_date }}" placeholder="To">
+                <button type="submit" class="btn-primary filter-apply">Apply</button>
+            </form>
+        </div>
+
+        <!-- 3. Summary stats row -->
         <div class="stats-row">
             <div class="profile-card stat-card">
                 <span class="stat-label">Total spent</span>
@@ -33,9 +59,12 @@
             </div>
         </div>
 
-        <!-- 3. Transaction history table -->
+        <!-- 4. Transaction history table -->
         <div class="profile-card table-card">
-            <h2 class="section-heading">Recent transactions</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+                <h2 class="section-heading" style="margin-bottom: 0;">Recent transactions</h2>
+                <a href="{{ url_for('add_expense') }}" class="btn-primary">+ Add Expense</a>
+            </div>
             <table class="txn-table">
                 <thead>
                     <tr>
@@ -58,7 +87,7 @@
             </table>
         </div>
 
-        <!-- 4. Category breakdown -->
+        <!-- 5. Category breakdown -->
         <div class="profile-card breakdown-card">
             <h2 class="section-heading">Category breakdown</h2>
             <div class="breakdown-list">
