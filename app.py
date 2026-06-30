@@ -1,7 +1,11 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 from database.db import get_db, init_db, seed_db
+from database.queries import insert_expense
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import date, datetime
+
+EXPENSE_CATEGORIES = ["Food", "Transport", "Bills", "Health", "Entertainment", "Shopping", "Other"]
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-key"
@@ -134,8 +138,6 @@ def profile():
     if 'user_id' not in session:
         return redirect(url_for('login'))
 
-    from datetime import datetime
-
     user_id = session['user_id']
     today = datetime.today().date()
     today_str = today.strftime('%Y-%m-%d')
@@ -249,9 +251,53 @@ def profile():
     )
 
 
-@app.route("/expenses/add")
+@app.route("/expenses/add", methods=["GET", "POST"])
 def add_expense():
-    return "Add expense — coming in Step 7"
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    if request.method == "POST":
+        amount_raw  = request.form.get("amount", "").strip()
+        category    = request.form.get("category", "").strip()
+        date_raw    = request.form.get("date", "").strip()
+        description = request.form.get("description", "").strip() or None
+
+        error = None
+        amount = None
+        try:
+            amount = float(amount_raw)
+            if amount <= 0:
+                error = "Amount must be greater than 0."
+        except ValueError:
+            error = "Amount must be a valid number."
+
+        if not error and category not in EXPENSE_CATEGORIES:
+            error = "Please select a valid category."
+
+        if not error:
+            try:
+                datetime.strptime(date_raw, "%Y-%m-%d")
+            except ValueError:
+                error = "Date must be in YYYY-MM-DD format."
+
+        if error:
+            return render_template("add_expense.html",
+                                   error=error,
+                                   categories=EXPENSE_CATEGORIES,
+                                   amount=amount_raw,
+                                   category=category,
+                                   date=date_raw,
+                                   description=request.form.get("description", ""))
+
+        db = get_db()
+        insert_expense(db, session['user_id'], amount, category, date_raw, description)
+        db.close()
+        return redirect(url_for('profile'))
+
+    return render_template("add_expense.html",
+                           categories=EXPENSE_CATEGORIES,
+                           date=date.today().isoformat(),
+                           error=None, amount="", category="", description="")
 
 
 @app.route("/expenses/<int:id>/edit")
