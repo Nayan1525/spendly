@@ -138,6 +138,38 @@ class TestAuthGuards:
 
 
 # ---------------------------------------------------------------------------
+# Route tests — GET /expenses/add (authenticated)
+# ---------------------------------------------------------------------------
+
+class TestGetAddExpenseForm:
+    """An authenticated GET renders the blank expense form."""
+
+    def test_get_authenticated_returns_200(self, auth_client):
+        """GET /expenses/add when logged in returns HTTP 200."""
+        client, _ = auth_client
+        resp = client.get("/expenses/add")
+        assert resp.status_code == 200
+
+    def test_get_authenticated_contains_all_required_fields(self, auth_client):
+        """The rendered form has amount, category, date, and description inputs."""
+        client, _ = auth_client
+        html = client.get("/expenses/add").data.decode().lower()
+        assert '<form' in html and 'method="post"' in html
+        for field in ('name="amount"', 'name="date"', 'name="description"'):
+            assert field in html, f"Form should contain an input with {field}"
+        assert "<select" in html, "Form should contain a <select for category"
+
+    @pytest.mark.parametrize("category", [
+        "Food", "Transport", "Bills", "Health", "Entertainment", "Shopping", "Other",
+    ])
+    def test_get_authenticated_select_contains_all_categories(self, auth_client, category):
+        """Every fixed category must appear as a dropdown option."""
+        client, _ = auth_client
+        resp = client.get("/expenses/add")
+        assert category.encode() in resp.data
+
+
+# ---------------------------------------------------------------------------
 # Route tests — POST /expenses/add success path
 # ---------------------------------------------------------------------------
 
@@ -1256,4 +1288,133 @@ class TestPublishExpensePayload:
         # First positional arg should be "sqs"
         assert call_args[0][0] == "sqs", (
             "boto3.client should be called with 'sqs' as the service name"
+        )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end: POST /expenses/add -> published message -> worker -> DB row
+# ---------------------------------------------------------------------------
+
+class TestEndToEndPipeline:
+    """
+    Every other test in this file mocks either the SQS boundary
+    (route tests, via patch("app.publish_expense")) or the DB boundary
+    (worker tests, via patch("worker.sqs_worker.insert_expense"/"get_db")).
+    That leaves no test proving the two halves actually connect: that the
+    message the route would publish is one the worker can consume into a
+    row owned by the right user.
+
+    These tests still mock the network hop (no real SQS) but run the real
+    ExpenseMessage validation, process_message, and insert_expense against
+    the temp SQLite DB from the `app` fixture — the same DB the route wrote
+    the user into via `auth_client`.
+    """
+
+    def _submit_and_process(self, auth_client, form_data):
+        """POST the form, capture what would have been published, then run
+        that exact message through the real worker pipeline."""
+        from worker.schemas import ExpenseMessage
+        from worker.sqs_worker import process_message
+
+        client, user_id = auth_client
+        with patch("app.publish_expense") as mock_pub:
+            mock_pub.return_value = "fake-message-id-e2e"
+            resp = client.post("/expenses/add", data=form_data)
+
+        published_user_id, amount, category, date, description = mock_pub.call_args[0]
+        message = ExpenseMessage(
+            user_id=published_user_id,
+            amount=amount,
+            category=category,
+            date=date,
+            description=description,
+        )
+        process_message(message.model_dump_json())
+        return resp, user_id
+
+    def test_submitted_expense_lands_in_db_owned_by_submitting_user(self, auth_client):
+        """The row the worker inserts belongs to the user who submitted the form."""
+        _, user_id = self._submit_and_process(auth_client, VALID_EXPENSE_FORM)
+
+        conn = get_db()
+        row = conn.execute(
+            "SELECT * FROM expenses WHERE user_id = ? AND date = ?",
+            (user_id, VALID_EXPENSE_FORM["date"]),
+        ).fetchone()
+        conn.close()
+
+        assert row is not None, "Row should exist in the DB after the full pipeline runs"
+        assert row["user_id"] == user_id, (
+            "Expense must be owned by the user who submitted it, not another user"
+        )
+
+    def test_submitted_expense_fields_match_form_input(self, auth_client):
+        """Amount, category, and description survive the full round trip unchanged."""
+        _, user_id = self._submit_and_process(auth_client, VALID_EXPENSE_FORM)
+
+        conn = get_db()
+        row = conn.execute(
+            "SELECT * FROM expenses WHERE user_id = ? AND date = ?",
+            (user_id, VALID_EXPENSE_FORM["date"]),
+        ).fetchone()
+        conn.close()
+
+        assert row["amount"] == float(VALID_EXPENSE_FORM["amount"])
+        assert row["category"] == VALID_EXPENSE_FORM["category"]
+        assert row["description"] == VALID_EXPENSE_FORM["description"]
+
+    def test_submitted_expense_with_no_description_stores_null_end_to_end(self, auth_client):
+        """An empty description form field ends up as NULL on the real row, not 'None'."""
+        form = {**VALID_EXPENSE_FORM, "description": ""}
+        _, user_id = self._submit_and_process(auth_client, form)
+
+        conn = get_db()
+        row = conn.execute(
+            "SELECT description FROM expenses WHERE user_id = ? AND date = ?",
+            (user_id, VALID_EXPENSE_FORM["date"]),
+        ).fetchone()
+        conn.close()
+
+        assert row["description"] is None, (
+            "Empty description should be stored as NULL after the full pipeline runs"
+        )
+
+    def test_two_users_submitting_do_not_cross_contaminate_rows(self, auth_client):
+        """A second user's submission must not be attributed to the first user."""
+        client, first_user_id = auth_client
+        self._submit_and_process(auth_client, VALID_EXPENSE_FORM)
+
+        client.get("/logout")
+        client.post(
+            "/register",
+            data={
+                "name": "Second User",
+                "email": "second-e2e@example.com",
+                "password": "testpass123",
+                "confirm_password": "testpass123",
+            },
+        )
+        client.post(
+            "/login",
+            data={"email": "second-e2e@example.com", "password": "testpass123"},
+        )
+        conn = get_db()
+        second_user_id = conn.execute(
+            "SELECT id FROM users WHERE email = ?", ("second-e2e@example.com",)
+        ).fetchone()["id"]
+        conn.close()
+
+        second_form = {**VALID_EXPENSE_FORM, "description": "Second user's lunch"}
+        self._submit_and_process((client, second_user_id), second_form)
+
+        conn = get_db()
+        second_row = conn.execute(
+            "SELECT user_id FROM expenses WHERE description = ?",
+            ("Second user's lunch",),
+        ).fetchone()
+        conn.close()
+
+        assert second_row is not None, "Second user's expense should be in the DB"
+        assert second_row["user_id"] != first_user_id, (
+            "Second user's expense must not be attributed to the first user"
         )
