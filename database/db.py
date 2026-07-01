@@ -32,6 +32,14 @@ def init_db():
             description TEXT,
             created_at  TEXT    DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS expense_categories (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT    NOT NULL UNIQUE,
+            description TEXT,
+            color       TEXT,
+            created_at  TEXT    DEFAULT (datetime('now'))
+        );
     """)
     db.commit()
     db.close()

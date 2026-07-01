@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 from database.db import get_db, init_db, seed_db
 from worker.sqs_publisher import publish_expense
+from routes.expense_category_routes import expense_category_bp
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import date, datetime
@@ -9,6 +10,7 @@ EXPENSE_CATEGORIES = ["Food", "Transport", "Bills", "Health", "Entertainment", "
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-key"
+app.register_blueprint(expense_category_bp)
 
 with app.app_context():
     init_db()
